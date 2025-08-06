@@ -73,44 +73,52 @@ def main():
         model.load_state_dict(state_dict, strict=False)
         print("load checkpoint from {}".format(args.load_pretrained))
 
-    # --- Parameter counting ---
+    # 4. Prepare dummy forward inputs – must match DDATR forward precisely
+    batch_size = 1
+    img_size = args.image_size
+    seq_len = 110  # Typically use gen_max_len or similar
+
+    dummy_image = torch.randn(batch_size, 3, img_size, img_size)            # main image
+    dummy_context_image = torch.randn(batch_size, 3, img_size, img_size)    # context image
+    dummy_caption = ['sample caption'] * batch_size                         # list of str
+    dummy_cls_labels = torch.zeros(batch_size, 14, dtype=torch.long)        # for 14 diseases
+    dummy_context_cls_labels = torch.zeros(batch_size, 14, dtype=torch.long)
+    dummy_context_ids = torch.zeros(batch_size, seq_len, dtype=torch.long)  # context BERT ids
+    dummy_context_segids = torch.zeros(batch_size, seq_len, dtype=torch.long)
+    dummy_context_attmasks = torch.ones(batch_size, seq_len, dtype=torch.long)
+    dummy_has_progress = torch.ones(batch_size, dtype=torch.bool)           # progress flag, adjust if model expects scalar
+    criterion_cls = nn.CrossEntropyLoss()
+    dummy_base_probs = np.ones(14, dtype=np.float32)
+
+    # 5. Patch forward for FLOPs/profiling (optional but helps thop)
+    orig_forward = model.forward
+    def patched_forward(image, context_image, caption, cls_labels, context_cls_labels, context_ids, context_segids, context_attmasks, has_progress, criterion_cls, base_probs):
+        with torch.no_grad():
+            return orig_forward(image, context_image, caption, cls_labels, context_cls_labels, context_ids, context_segids, context_attmasks, has_progress, criterion_cls, base_probs)
+    model.forward = patched_forward
+
+    # 6. Parameter counting
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
 
-    # --- FLOPs calculation ---
-    try:
-        from thop import profile, clever_format
-    except ImportError:
-        import os
-        os.system('pip install -q thop')
-        from thop import profile, clever_format
+    # 7. Profile FLOPs
 
-    batch_size = 1
-    dummy_image = torch.randn(batch_size, 3, args.image_size, args.image_size)
-    dummy_caption = ['this is a dummy caption'] * batch_size
-    # ---- FIX: Use 14, not 18, for class count to match model config! ----
-    dummy_cls_labels = torch.zeros(batch_size, 14, dtype=torch.long)
-    clip_k = 21
-    clip_dim = 512
-    dummy_clip_memory = torch.randn(batch_size, clip_k, clip_dim)
-    criterion_cls = nn.CrossEntropyLoss()
-    dummy_base_probs = np.ones(14, dtype=np.float32)
-
-    orig_forward = model.forward
-    def patched_forward(image, caption, cls_labels, clip_memory, criterion_cls, base_probs):
-        with torch.no_grad():
-            return orig_forward(image, caption, cls_labels, clip_memory, criterion_cls, base_probs)
-    model.forward = patched_forward
+    from thop import profile, clever_format
 
     macs, params = profile(
         model,
         inputs=(
             dummy_image,
+            dummy_context_image,
             dummy_caption,
             dummy_cls_labels,
-            dummy_clip_memory,
+            dummy_context_cls_labels,
+            dummy_context_ids,
+            dummy_context_segids,
+            dummy_context_attmasks,
+            dummy_has_progress,
             criterion_cls,
             dummy_base_probs
         )
@@ -119,7 +127,7 @@ def main():
     print(f"FLOPs (thop): {macs_cf}")
     print(f"Parameters (thop): {params_cf}")
 
-    model.forward = orig_forward  # (optional)
+    model.forward = orig_forward  # Restore if necessary
 
 if __name__ == '__main__':
     main()
