@@ -73,6 +73,13 @@ def main():
         model.load_state_dict(state_dict, strict=False)
         print("load checkpoint from {}".format(args.load_pretrained))
 
+    model = model.to(device)   
+    model_without_ddp = model
+    if args.distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
+        model_without_ddp = model.module    
+
+
     # 4. Prepare dummy forward inputs – must match DDATR forward precisely
     batch_size = 1
     img_size = args.image_size
