@@ -102,7 +102,8 @@ def main():
     dummy_context_attmasks = torch.ones(batch_size, seq_len, dtype=torch.long).to(device)
     dummy_has_progress = torch.ones(batch_size, dtype=torch.bool).to(device)
     criterion_cls = nn.CrossEntropyLoss()
-    dummy_base_probs = torch.ones(14, dtype=torch.float32).to(device)
+    dummy_base_probs = np.ones(14, dtype=np.float32)
+
 
     # Patch forward for FLOPs profiling to avoid side effects
     orig_forward = model.forward
